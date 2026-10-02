@@ -49,19 +49,33 @@ jobs:
         id: android
         shell: bash
         run: |
-          GRADLEW=$(find . -name gradlew -type f | head -n 1)
-          if [ -z "$GRADLEW" ]; then
-            echo "gradlew not found"
+          BUILD_FILE=$(find . -name settings.gradle -o -name settings.gradle.kts | head -n 1)
+          if [ -z "$BUILD_FILE" ]; then
+            echo "Android Gradle project not found"
+            find . -maxdepth 3 -name build.gradle -o -name build.gradle.kts
             exit 1
           fi
-          echo "dir=$(dirname $GRADLEW)" >> $GITHUB_OUTPUT
+
+          DIR=$(dirname "$BUILD_FILE")
+          echo "dir=$DIR" >> $GITHUB_OUTPUT
+
+          if [ -f "$DIR/gradlew" ]; then
+            echo "wrapper=true" >> $GITHUB_OUTPUT
+          else
+            echo "wrapper=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build Android APK
         shell: bash
         run: |
           cd "${{ steps.android.outputs.dir }}"
-          chmod +x ./gradlew
-          ./gradlew assembleDebug
+          if [ "${{ steps.android.outputs.wrapper }}" = "true" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug
+          else
+            echo "gradlew not found, using system gradle"
+            gradle assembleDebug
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -95,8 +109,14 @@ jobs:
       - name: Copy Android APK
         shell: bash
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk nrfr-client/build/bin/resources/nrfr.apk
-          cp app/build/outputs/apk/debug/app-debug.apk nrfr-${{ steps.version.outputs.version }}.apk
+          APK=$(find . -path "*/build/outputs/apk/*/app-*.apk" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "APK not found"
+            find . -name "*.apk"
+            exit 1
+          fi
+          cp "$APK" nrfr-client/build/bin/resources/nrfr.apk
+          cp "$APK" nrfr-${{ steps.version.outputs.version }}.apk
 
       - name: Download platform-tools
         shell: bash
