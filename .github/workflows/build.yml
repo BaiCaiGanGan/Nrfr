@@ -45,9 +45,21 @@ jobs:
           mkdir -p $ANDROID_HOME/platforms/android-34
           curl -L https://raw.githubusercontent.com/Reginer/aosp-android-jar/refs/heads/main/android-34/android.jar -o $ANDROID_HOME/platforms/android-34/android.jar
 
+      - name: Find Android Gradle Project
+        id: android
+        shell: bash
+        run: |
+          GRADLEW=$(find . -name gradlew -type f | head -n 1)
+          if [ -z "$GRADLEW" ]; then
+            echo "gradlew not found"
+            exit 1
+          fi
+          echo "dir=$(dirname $GRADLEW)" >> $GITHUB_OUTPUT
+
       - name: Build Android APK
         shell: bash
         run: |
+          cd "${{ steps.android.outputs.dir }}"
           chmod +x ./gradlew
           ./gradlew assembleDebug
 
