@@ -21,9 +21,13 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "### Build" > CHANGELOG.md
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=$(git rev-parse --short HEAD)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "### Build $VERSION" > CHANGELOG.md
 
       - name: Set up JDK
         uses: actions/setup-java@v5
@@ -39,41 +43,17 @@ jobs:
             platforms;android-34
             build-tools;34.0.0
 
-      - name: Download android.jar
-        shell: bash
-        run: |
-          mkdir -p $ANDROID_HOME/platforms/android-34
-          curl -L https://raw.githubusercontent.com/Reginer/aosp-android-jar/refs/heads/main/android-34/android.jar -o $ANDROID_HOME/platforms/android-34/android.jar
-
-      - name: Find Android Gradle Project
-        id: android
-        shell: bash
-        run: |
-          BUILD_FILE=$(find . -name settings.gradle -o -name settings.gradle.kts | head -n 1)
-          if [ -z "$BUILD_FILE" ]; then
-            echo "Android Gradle project not found"
-            find . -maxdepth 3 -name build.gradle -o -name build.gradle.kts
-            exit 1
-          fi
-
-          DIR=$(dirname "$BUILD_FILE")
-          echo "dir=$DIR" >> $GITHUB_OUTPUT
-
-          if [ -f "$DIR/gradlew" ]; then
-            echo "wrapper=true" >> $GITHUB_OUTPUT
-          else
-            echo "wrapper=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Build Android APK
         shell: bash
         run: |
-          cd "${{ steps.android.outputs.dir }}"
-          if [ "${{ steps.android.outputs.wrapper }}" = "true" ]; then
+          BUILD_FILE=$(find . -name settings.gradle -o -name settings.gradle.kts | head -n 1)
+          test -n "$BUILD_FILE" || exit 1
+          DIR=$(dirname "$BUILD_FILE")
+          cd "$DIR"
+          if [ -f ./gradlew ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug
           else
-            echo "gradlew not found, using system gradle"
             gradle assembleDebug
           fi
 
@@ -86,8 +66,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: nrfr-client/frontend/package-lock.json
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
@@ -100,45 +78,27 @@ jobs:
           cd ..
           wails build
 
-      - name: Download Shizuku APK
-        shell: bash
-        run: |
-          mkdir -p nrfr-client/build/bin/resources
-          curl -L $(curl -s https://api.github.com/repos/RikkaApps/Shizuku/releases/latest | grep "browser_download_url.*apk" | cut -d '"' -f 4) -o nrfr-client/build/bin/resources/shizuku.apk
-
       - name: Copy Android APK
         shell: bash
         run: |
+          mkdir -p nrfr-client/build/bin/resources
           APK=$(find . -path "*/build/outputs/apk/*/app-*.apk" | head -n 1)
-          if [ -z "$APK" ]; then
-            echo "APK not found"
-            find . -name "*.apk"
-            exit 1
-          fi
+          test -n "$APK" || exit 1
           cp "$APK" nrfr-client/build/bin/resources/nrfr.apk
           cp "$APK" nrfr-${{ steps.version.outputs.version }}.apk
-
-      - name: Download platform-tools
-        shell: bash
-        run: |
-          mkdir -p nrfr-client/build/bin/platform-tools
-          curl -L https://dl.google.com/android/repository/platform-tools-latest-windows.zip -o platform-tools.zip
-          unzip -o platform-tools.zip
-          cp -r platform-tools/* nrfr-client/build/bin/platform-tools/
 
       - name: Create Release Archive
         shell: bash
         run: |
           cd nrfr-client/build/bin
-          7z a "../../nrfr-${{ steps.version.outputs.version }}-release.zip" ./*
+          7z a ../../nrfr-${{ steps.version.outputs.version }}-release.zip ./*
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            nrfr-client/nrfr-${{ steps.version.outputs.version }}-release.zip
             nrfr-${{ steps.version.outputs.version }}.apk
-          body_path: CHANGELOG.md
+            nrfr-client/nrfr-${{ steps.version.outputs.version }}-release.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
